@@ -77,24 +77,6 @@
   (setq defaultDisplayScale 20.0)  ;; Valeur affichée à l'utilisateur
   (setq scaleMultiplier 10.0)      ;; Multiplicateur pour convertir cm en mm
   
-  ;; Demander à l'utilisateur s'il souhaite utiliser un facteur d'échelle personnalisé
-  (setq scaleInput (getstring (strcat "\nFacteur d'échelle [" (rtos defaultDisplayScale 2 1) "] : ")))
-  (setq userDisplayScale (if (= scaleInput "") defaultDisplayScale (atof scaleInput)))
-  
-  ;; Vérifier que le facteur d'échelle est valide et positif
-  (if (<= userDisplayScale 0.0)
-    (progn
-      (alert "Le facteur d'échelle doit être un nombre positif. Utilisation de la valeur par défaut.")
-      (setq displayScale defaultDisplayScale)
-    )
-    (setq displayScale userDisplayScale)
-  )
-  
-  ;; Calculer le facteur d'échelle réel (multiplié par 10 pour conversion cm/mm)
-  ;; Note: Cette conversion est nécessaire car l'utilisateur pense en échelle de dessin (1:20)
-  ;; mais AutoCAD a besoin d'un facteur réel pour l'insertion (200 pour une échelle de 1:20)
-  (setq scale (* displayScale scaleMultiplier))
-  
   ;; Récupérer le dernier dossier utilisé ou utiliser le dossier par défaut
   (setq lastUsedFolder (getLastUsedFolder))
   (setq defaultDxfFolder (if lastUsedFolder lastUsedFolder "C:/Temp/DXF/"))
@@ -229,6 +211,25 @@
       (exit)
     )
   )
+  
+  ;; ===== DEMANDE DU FACTEUR D'ÉCHELLE =====
+  ;; Demander à l'utilisateur s'il souhaite utiliser un facteur d'échelle personnalisé
+  (setq scaleInput (getstring (strcat "\nFacteur d'échelle [" (rtos defaultDisplayScale 2 1) "] : ")))
+  (setq userDisplayScale (if (= scaleInput "") defaultDisplayScale (atof scaleInput)))
+  
+  ;; Vérifier que le facteur d'échelle est valide et positif
+  (if (<= userDisplayScale 0.0)
+    (progn
+      (alert "Le facteur d'échelle doit être un nombre positif. Utilisation de la valeur par défaut.")
+      (setq displayScale defaultDisplayScale)
+    )
+    (setq displayScale userDisplayScale)
+  )
+  
+  ;; Calculer le facteur d'échelle réel (multiplié par 10 pour conversion cm/mm)
+  ;; Note: Cette conversion est nécessaire car l'utilisateur pense en échelle de dessin (1:20)
+  ;; mais AutoCAD a besoin d'un facteur réel pour l'insertion (200 pour une échelle de 1:20)
+  (setq scale (* displayScale scaleMultiplier))
   
   ;; ===== INSERTION DES FICHIERS DXF =====
   (setq nbCartouches 0)
