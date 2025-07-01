@@ -11,6 +11,10 @@
 ;;                     - Amélioration de la robustesse avec vérifications d'erreurs
 ;;                     - Gestion des valeurs nil et des chaînes invalides
 ;;                     - Ajout d'un facteur d'échelle personnalisable (20 par défaut, converti en 200)
+;;                     - Sélection interactive du point de départ pour l'insertion
+;;                     - Personnalisation des espacements horizontaux et verticaux entre les DXF
+;;                     - Insertion de tous les fichiers DXF sans limitation
+;;                     - Choix du nombre de DXF par ligne (disposition en grille ou linéaire)
 ;; ===================================================================
 
 ;; Fonction pour vérifier si une variable est une chaîne
@@ -141,19 +145,80 @@
     )
   )
   
-  ;; Position de départ pour l'insertion
-  (setq baseX 0.0)
-  (setq baseY 0.0)
+  ;; Position de départ pour l'insertion - Demander à l'utilisateur
+  (princ "\nSélectionnez le point de départ pour l'insertion des DXF : ")
+  (setq basePoint (getpoint))
+  (if (null basePoint)
+    (progn
+      (princ "\nPoint de départ non spécifié. Utilisation des coordonnées par défaut (0,0).")
+      (setq baseX 0.0)
+      (setq baseY 0.0)
+    )
+    (progn
+      (setq baseX (car basePoint))
+      (setq baseY (cadr basePoint))
+    )
+  )
   
-  ;; Pas entre chaque cartouche (à adapter selon la taille de vos cartouches)
-  (setq pasX 420.0) ;; Distance horizontale entre cartouches
-  (setq pasY 297.0) ;; Distance verticale entre cartouches
+  ;; Pas entre chaque cartouche - Demander à l'utilisateur
+  (setq pasXInput (getstring "\nDistance horizontale entre les DXF [420] : "))
+  (setq pasXValue (if (= pasXInput "") 420.0 (atof pasXInput)))
   
-  ;; Nombre maximum de cartouches disponibles dans le gabarit
-  (setq maxCartouches 6) ;; À adapter selon votre gabarit
+  ;; Vérifier que la distance horizontale est positive
+  (if (<= pasXValue 0.0)
+    (progn
+      (alert "La distance horizontale doit être positive. Utilisation de la valeur par défaut (420).")
+      (setq pasX 420.0)
+    )
+    (setq pasX pasXValue)
+  )
+  
+  (setq pasYInput (getstring "\nDistance verticale entre les DXF [297] : "))
+  (setq pasYValue (if (= pasYInput "") 297.0 (atof pasYInput)))
+  
+  ;; Vérifier que la distance verticale est positive
+  (if (<= pasYValue 0.0)
+    (progn
+      (alert "La distance verticale doit être positive. Utilisation de la valeur par défaut (297).")
+      (setq pasY 297.0)
+    )
+    (setq pasY pasYValue)
+  )
+  
+  ;; Nombre maximum de cartouches disponibles dans le gabarit - Toujours insérer tous les fichiers
+  (setq maxCartouches 99999)  ;; Valeur très élevée pour insérer tous les fichiers DXF
   
   ;; Nombre de cartouches par ligne (pour disposition en grille)
-  (setq cartouchesParLigne 3) ;; Mettre à 0 pour disposition linéaire horizontale
+  (setq cartouchesParLigneInput (getstring "\nNombre de DXF par ligne [3] (0 pour disposition linéaire) : "))
+  (setq cartouchesParLigneValue (if (= cartouchesParLigneInput "") 3 (atoi cartouchesParLigneInput)))
+  
+  ;; Pas de validation négative ici car 0 est une valeur valide (disposition linéaire)
+  (if (< cartouchesParLigneValue 0)
+    (progn
+      (alert "Le nombre de DXF par ligne ne peut pas être négatif. Utilisation de la valeur par défaut (3).")
+      (setq cartouchesParLigne 3)
+    )
+    (setq cartouchesParLigne cartouchesParLigneValue)
+  )
+  
+  ;; ===== DEMANDE DU FACTEUR D'ÉCHELLE =====
+  ;; Demander à l'utilisateur s'il souhaite utiliser un facteur d'échelle personnalisé
+  (setq scaleInput (getstring (strcat "\nFacteur d'échelle [" (rtos defaultDisplayScale 2 1) "] : ")))
+  (setq userDisplayScale (if (= scaleInput "") defaultDisplayScale (atof scaleInput)))
+  
+  ;; Vérifier que le facteur d'échelle est valide et positif
+  (if (<= userDisplayScale 0.0)
+    (progn
+      (alert "Le facteur d'échelle doit être un nombre positif. Utilisation de la valeur par défaut.")
+      (setq displayScale defaultDisplayScale)
+    )
+    (setq displayScale userDisplayScale)
+  )
+  
+  ;; Calculer le facteur d'échelle réel (multiplié par 10 pour conversion cm/mm)
+  ;; Note: Cette conversion est nécessaire car l'utilisateur pense en échelle de dessin (1:20)
+  ;; mais AutoCAD a besoin d'un facteur réel pour l'insertion (200 pour une échelle de 1:20)
+  (setq scale (* displayScale scaleMultiplier))
   
   ;; ===== VÉRIFICATION DU DOSSIER =====
   (if (not (and dxfFolder (is-string dxfFolder)))
@@ -212,36 +277,17 @@
     )
   )
   
-  ;; ===== DEMANDE DU FACTEUR D'ÉCHELLE =====
-  ;; Demander à l'utilisateur s'il souhaite utiliser un facteur d'échelle personnalisé
-  (setq scaleInput (getstring (strcat "\nFacteur d'échelle [" (rtos defaultDisplayScale 2 1) "] : ")))
-  (setq userDisplayScale (if (= scaleInput "") defaultDisplayScale (atof scaleInput)))
-  
-  ;; Vérifier que le facteur d'échelle est valide et positif
-  (if (<= userDisplayScale 0.0)
-    (progn
-      (alert "Le facteur d'échelle doit être un nombre positif. Utilisation de la valeur par défaut.")
-      (setq displayScale defaultDisplayScale)
-    )
-    (setq displayScale userDisplayScale)
-  )
-  
-  ;; Calculer le facteur d'échelle réel (multiplié par 10 pour conversion cm/mm)
-  ;; Note: Cette conversion est nécessaire car l'utilisateur pense en échelle de dessin (1:20)
-  ;; mais AutoCAD a besoin d'un facteur réel pour l'insertion (200 pour une échelle de 1:20)
-  (setq scale (* displayScale scaleMultiplier))
+  ;; Pas de tri des fichiers - utilisation de l'ordre par défaut
   
   ;; ===== INSERTION DES FICHIERS DXF =====
   (setq nbCartouches 0)
   
   ;; Boucle sur chaque fichier DXF
   (foreach dxfFile dxfFiles
-    ;; Vérification du nombre maximum de cartouches
+    ;; Vérification du nombre maximum de cartouches (toujours insérer tous les fichiers)
     (if (>= nbCartouches maxCartouches)
       (progn
-        (alert (strcat "Limite de " (itoa maxCartouches) " cartouches atteinte. " 
-                      (itoa (- (length dxfFiles) nbCartouches)) 
-                      " fichier(s) DXF n'ont pas été insérés."))
+        (alert "Tous les fichiers DXF ont été insérés.")
         (exit)
       )
     )
@@ -292,7 +338,13 @@
   (saveLastUsedFolder dxfFolder)
   
   ;; ===== MESSAGE DE FIN =====
-  (alert (strcat "Insertion terminée ! " (itoa nbCartouches) " fichier(s) DXF inséré(s) avec un facteur d'échelle de " (rtos displayScale 2 1) "."))
+  (alert (strcat "Insertion terminée ! \n" 
+                (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
+                "- Facteur d'échelle : " (rtos displayScale 2 1) "\n"
+                "- Point de départ : (" (rtos baseX 2 2) "," (rtos baseY 2 2) ")\n"
+                "- Espacement H/V : " (rtos pasX 2 0) "/" (rtos pasY 2 0) "\n"
+                "- DXF par ligne : " (itoa cartouchesParLigne) (if (= cartouchesParLigne 0) " (linéaire)" " (grille)")
+         ))
   
   (princ)
 )
