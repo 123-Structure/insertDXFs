@@ -74,7 +74,7 @@
 )
 
 ;; Fonction principale - Insertion des DXFs
-(defun c:InsertDXFs (/ dxfFolder dxfFiles pasX nbCartouches lastUsedFolder selectedDxfFiles cartoucheWidth cartoucheHeight defaultDxfFolder startPoint startX startY diagonalPoint diagonalX diagonalY centerX centerY spacingPoint spacingX spacingY displayScale scale selectionMode fullPath currentCenterX currentCenterY tempInsertPoint tempEnt dxfWidth dxfHeight ss minPoint maxPoint i ent obj minPt maxPt posX posY dxfFile scaleMultiplier)
+(defun c:InsertDXFs (/ dxfFolder dxfFiles pasX nbCartouches lastUsedFolder selectedDxfFiles cartoucheWidth cartoucheHeight defaultDxfFolder startPoint startX startY diagonalPoint diagonalX diagonalY centerX centerY spacingPoint spacingX spacingY displayScale scale selectionMode fullPath currentCenterX currentCenterY tempInsertPoint tempEnt dxfWidth dxfHeight ss minPoint maxPoint i ent obj minPt maxPt posX posY dxfFile scaleMultiplier customSortDxfFiles done selectedFile resp getFilePrefix getFileNumber getBaseNumber getPartNumber)
   
   ;; ===== CONFIGURATION =====
   ;; Chargement des bibliothèques nécessaires
@@ -302,14 +302,255 @@
   
   ;; Demander à l'utilisateur s'il souhaite insérer tous les fichiers ou faire une sélection
   (initget "Tous Selection T S")
-  (setq selectionMode (getkword "\nInsérer [Tous] les fichiers DXF ou faire une [Selection] ? <Tous>: "))
+  (setq selectionMode (getkword "\nInsérer [Tous/Selection] les fichiers DXF ? <Tous>: "))
+  
+  ;; Fonction pour trier les fichiers DXF selon un ordre personnalisé
+  (defun customSortDxfFiles (dxfFiles / sortedFiles lgFiles lbFiles otherFiles getFilePrefix getFileNumber getBaseNumber getPartNumber fileNum baseNum partNum i prefix fileGroups groupKey fileGroup)
+    ;; Fonction pour extraire le préfixe d'un nom de fichier (LG, LB, etc.)
+    (defun getFilePrefix (fileName)
+      (if (and fileName (is-string fileName))
+        (progn
+          ;; Extraire les 2 premiers caractères du nom de fichier
+          (if (>= (strlen fileName) 2)
+            (strcase (substr fileName 1 2))
+            "")
+        )
+        ""
+      )
+    )
+    
+    ;; Fonction pour extraire le numéro d'un nom de fichier
+    (defun getFileNumber (fileName / prefix numStr i char foundDigit)
+      (if (and fileName (is-string fileName))
+        (progn
+          ;; Extraire le préfixe (2 premiers caractères)
+          (setq prefix (getFilePrefix fileName))
+          
+          ;; Extraire la partie numérique à la fin du nom de fichier
+          (setq numStr "")
+          (setq fileName (vl-filename-base fileName)) ;; Nom sans extension
+          
+          ;; Parcourir le nom de fichier de la fin vers le début pour trouver les chiffres
+          (setq i (strlen fileName))
+          (setq foundDigit nil)
+          (while (> i 0)
+            (setq char (substr fileName i 1))
+            ;; Si le caractère est un chiffre
+            (if (and (>= (ascii char) 48) (<= (ascii char) 57))
+              (progn
+                (setq numStr (strcat char numStr))
+                (setq foundDigit T)
+              )
+              ;; Si on a déjà trouvé des chiffres et qu'on rencontre un non-chiffre, arrêter
+              (if foundDigit (setq i 0))
+            )
+            (setq i (1- i))
+          )
+          
+          ;; Retourner le numéro sous forme de chaîne pour préserver les zéros initiaux
+          ;; pour le tri, mais le convertir en nombre pour les comparaisons
+          (if (and numStr (> (strlen numStr) 0))
+            (atoi numStr)
+            0
+          )
+        )
+        0
+      )
+    )
+    
+    ;; Fonction pour extraire le numéro de base (sans le suffixe _1, _2, etc.)
+    (defun getBaseNumber (fileName / baseFileName pos dashPos prefix numStr i char foundDigit)
+      (setq baseFileName (vl-filename-base fileName))
+      
+      ;; Chercher la position du dernier underscore (pour les parties _1, _2, etc.)
+      (setq pos (vl-string-search "_" baseFileName (- (strlen baseFileName) 3)))
+      
+      ;; Traiter d'abord le cas des underscores
+      (if pos
+        ;; Si un underscore est trouvé près de la fin, on travaille sur la partie avant l'underscore
+        (setq baseFileName (substr baseFileName 1 pos))
+      )
+      
+      ;; Extraire le préfixe (2 premiers caractères)
+      (setq prefix (getFilePrefix baseFileName))
+      
+      ;; Extraire le premier numéro après le préfixe
+      (setq numStr "")
+      (setq i (+ (strlen prefix) 1))
+      (setq foundDigit nil)
+      
+      ;; Parcourir le nom de fichier après le préfixe pour trouver le premier groupe de chiffres
+      (while (and (<= i (strlen baseFileName)) (not foundDigit))
+        (setq char (substr baseFileName i 1))
+        ;; Si le caractère est un chiffre
+        (if (and (>= (ascii char) 48) (<= (ascii char) 57))
+          (progn
+            ;; Commencer à collecter les chiffres
+            (setq numStr (strcat numStr char))
+            (setq foundDigit T)
+            (setq i (1+ i))
+            
+            ;; Continuer à collecter les chiffres consécutifs jusqu'au premier tiret ou autre séparateur
+            (while (and (<= i (strlen baseFileName)) 
+                        (setq char (substr baseFileName i 1))
+                        (and (>= (ascii char) 48) (<= (ascii char) 57)))
+              (setq numStr (strcat numStr char))
+              (setq i (1+ i))
+            )
+          )
+          ;; Passer au caractère suivant si ce n'est pas un chiffre
+          (setq i (1+ i))
+        )
+      )
+      
+      ;; Retourner le numéro trouvé ou 0 si aucun
+      (if (and numStr (> (strlen numStr) 0))
+        (atoi numStr)
+        0
+      )
+    )
+    
+    ;; Fonction pour extraire le numéro de partie (_1, _2, etc.)
+    (defun getPartNumber (fileName / baseFileName pos partStr)
+      (setq baseFileName (vl-filename-base fileName))
+      ;; Chercher la position du dernier underscore
+      (setq pos (vl-string-search "_" baseFileName (- (strlen baseFileName) 3)))
+      (if pos
+        ;; Si un underscore est trouvé près de la fin, extraire le numéro après l'underscore
+        (progn
+          (setq partStr (substr baseFileName (+ pos 2)))
+          (if (and partStr (> (strlen partStr) 0))
+            (atoi partStr)
+            1
+          )
+        )
+        ;; Sinon, retourner 1 comme numéro de partie par défaut
+        1
+      )
+    )
+    
+    ;; Séparer les fichiers en trois catégories: LG, LB et autres
+    (setq lgFiles nil)
+    (setq lbFiles nil)
+    (setq otherFiles nil)
+    
+    (princ "\n=== Analyse des fichiers pour le tri personnalisé ===")
+    (foreach file dxfFiles
+      (setq prefix (getFilePrefix (vl-filename-base file)))
+      (setq fileNum (getFileNumber (vl-filename-base file)))
+      (setq baseNum (getBaseNumber file))
+      (setq partNum (getPartNumber file))
+      (princ (strcat "\nFichier: " file " - Préfixe: " prefix " - Numéro: " (itoa fileNum) 
+                     " - Base: " (itoa baseNum) " - Partie: " (itoa partNum)))
+      (cond
+        ((= prefix "LG") 
+         (setq lgFiles (append lgFiles (list file)))
+         (princ " -> Catégorie: LG"))
+        ((= prefix "LB") 
+         (setq lbFiles (append lbFiles (list file)))
+         (princ " -> Catégorie: LB"))
+        (T 
+         (setq otherFiles (append otherFiles (list file)))
+         (princ " -> Catégorie: Autre"))
+      )
+    )
+    
+    ;; Regrouper les fichiers par préfixe et numéro de base
+    (setq fileGroups (list))
+    
+    ;; Traiter d'abord les fichiers LG
+    (foreach file lgFiles
+      (setq baseNum (getBaseNumber file))
+      (setq groupKey (strcat "LG" (itoa baseNum)))
+      (setq fileGroup (assoc groupKey fileGroups))
+      (if fileGroup
+        ;; Ajouter à un groupe existant
+        (setq fileGroups (subst (cons groupKey (append (cdr fileGroup) (list file))) fileGroup fileGroups))
+        ;; Créer un nouveau groupe
+        (setq fileGroups (append fileGroups (list (cons groupKey (list file)))))
+      )
+    )
+    
+    ;; Traiter ensuite les fichiers LB
+    (foreach file lbFiles
+      (setq baseNum (getBaseNumber file))
+      (setq groupKey (strcat "LB" (itoa baseNum)))
+      (setq fileGroup (assoc groupKey fileGroups))
+      (if fileGroup
+        ;; Ajouter à un groupe existant
+        (setq fileGroups (subst (cons groupKey (append (cdr fileGroup) (list file))) fileGroup fileGroups))
+        ;; Créer un nouveau groupe
+        (setq fileGroups (append fileGroups (list (cons groupKey (list file)))))
+      )
+    )
+    
+    ;; Traiter enfin les autres fichiers
+    (foreach file otherFiles
+      (setq prefix (getFilePrefix (vl-filename-base file)))
+      (setq baseNum (getBaseNumber file))
+      (setq groupKey (strcat prefix (itoa baseNum)))
+      (setq fileGroup (assoc groupKey fileGroups))
+      (if fileGroup
+        ;; Ajouter à un groupe existant
+        (setq fileGroups (subst (cons groupKey (append (cdr fileGroup) (list file))) fileGroup fileGroups))
+        ;; Créer un nouveau groupe
+        (setq fileGroups (append fileGroups (list (cons groupKey (list file)))))
+      )
+    )
+    
+    ;; Trier les groupes par préfixe et numéro
+    (setq fileGroups (vl-sort fileGroups (function (lambda (a b / prefixA numA prefixB numB)
+      (setq prefixA (substr (car a) 1 2))
+      (setq numA (atoi (substr (car a) 3)))
+      (setq prefixB (substr (car b) 1 2))
+      (setq numB (atoi (substr (car b) 3)))
+      (cond
+        ;; LG en premier
+        ((and (= prefixA "LG") (/= prefixB "LG")) T)
+        ;; LB en deuxième
+        ((and (= prefixA "LB") (/= prefixB "LG") (/= prefixB "LB")) T)
+        ((and (/= prefixA "LB") (= prefixB "LB")) nil)
+        ;; Pour les autres préfixes, trier par numéro de base
+        ((and (/= prefixA "LG") (/= prefixA "LB") (/= prefixB "LG") (/= prefixB "LB")) (< numA numB))
+        ;; Cas par défaut (ne devrait pas arriver)
+        (T (< prefixA prefixB))
+      )
+    ))))
+    
+    ;; Trier les fichiers dans chaque groupe par numéro de partie
+    (foreach group fileGroups
+      (setq fileGroup (cdr group))
+      (setq fileGroup (vl-sort fileGroup (function (lambda (a b) (< (getPartNumber a) (getPartNumber b))))))
+      (setq fileGroups (subst (cons (car group) fileGroup) group fileGroups))
+    )
+    
+    ;; Aplatir les groupes en une seule liste
+    (setq sortedFiles nil)
+    (foreach group fileGroups
+      (setq sortedFiles (append sortedFiles (cdr group)))
+    )
+    
+    ;; Afficher l'ordre final d'insertion
+    (princ "\n\n=== Ordre final d'insertion ===")
+    (setq i 1)
+    (foreach file sortedFiles
+      (princ (strcat "\n" (itoa i) ". " file 
+                     " (Préfixe: " (getFilePrefix (vl-filename-base file)) 
+                     ", Base: " (itoa (getBaseNumber file)) 
+                     ", Partie: " (itoa (getPartNumber file)) ")"))
+      (setq i (1+ i))
+    )
+    
+    ;; Retourner la liste triée
+    sortedFiles
+  )
   
   ;; Si l'utilisateur a choisi d'insérer tous les fichiers ou n'a rien entré
   (if (or (null selectionMode) (= selectionMode "Tous") (= selectionMode "T"))
-    ;; Utiliser tous les fichiers DXF
+    ;; Utiliser tous les fichiers DXF avec tri personnalisé
     (progn
-      (setq selectedDxfFiles dxfFiles)
-      (princ (strcat "\nTous les fichiers DXF du dossier seront insérés (" (itoa (length dxfFiles)) " fichiers)."))
+      (setq selectedDxfFiles (customSortDxfFiles dxfFiles))
+      (princ (strcat "\nTous les fichiers DXF du dossier seront insérés (" (itoa (length dxfFiles)) " fichiers) selon l'ordre personnalisé."))
     )
     ;; Sinon, permettre à l'utilisateur de sélectionner les fichiers
     (progn
@@ -516,20 +757,30 @@
   (saveLastUsedFolder dxfFolder)
   
   ;; ===== MESSAGE DE FIN =====
-  (alert (strcat "Insertion terminée ! \n\n" 
-                (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
-                "- Facteur d'échelle : 20 (fixe - échelle 1:20)\n"
-                "- Centre du premier cartouche : (" (rtos centerX 2 2) "," (rtos centerY 2 2) ")\n"
-                "- Dimensions du cartouche : " (rtos cartoucheWidth 2 0) " x " (rtos cartoucheHeight 2 0) "\n"
-                (if (null spacingPoint)
-                  (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (valeur par défaut)")
-                  (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (calculé automatiquement)")
-                )
-                "\n\nMode : " (if (or (null selectionMode) (= selectionMode "Tous") (= selectionMode "T"))
-                            "Tous les fichiers DXF du dossier"
-                            "Sélection manuelle des fichiers")
-                "\nCentrage : DXF centrés dans les cartouches"
-         ))
+  ;; Créer la liste des fichiers insérés sans l'extension .DXF
+  (setq fileListStr "\n\nFichiers insérés :\n")
+  (setq fileIndex 1)
+  (foreach file selectedDxfFiles
+    (setq fileNameWithoutExt (vl-filename-base file))
+    (setq fileListStr (strcat fileListStr (itoa fileIndex) ". " fileNameWithoutExt "\n"))
+    (setq fileIndex (1+ fileIndex))
+  )
+  
+  ; (alert (strcat "Insertion terminée ! \n\n" 
+  ;               (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
+  ;               "- Facteur d'échelle : 20 (fixe - échelle 1:20)\n"
+  ;               "- Centre du premier cartouche : (" (rtos centerX 2 2) "," (rtos centerY 2 2) ")\n"
+  ;               "- Dimensions du cartouche : " (rtos cartoucheWidth 2 0) " x " (rtos cartoucheHeight 2 0) "\n"
+  ;               (if (null spacingPoint)
+  ;                 (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (valeur par défaut)")
+  ;                 (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (calculé automatiquement)")
+  ;               )
+  ;               "\n\nMode : " (if (or (null selectionMode) (= selectionMode "Tous") (= selectionMode "T"))
+  ;                           "Tous les fichiers DXF du dossier"
+  ;                           "Sélection manuelle des fichiers")
+  ;               "\nCentrage : DXF centrés dans les cartouches"
+  ;               fileListStr
+  ;        ))
   
   (princ)
 )
