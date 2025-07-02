@@ -12,7 +12,7 @@
 ;;                     - Gestion des valeurs nil et des chaînes invalides
 ;;                     - Ajout d'un facteur d'échelle personnalisable (20 par défaut, converti en 200)
 ;;                     - Sélection interactive du point de départ pour l'insertion
-;;                     - Personnalisation de l'espacement horizontal entre les DXF
+;;                     - Calcul automatique de l'espacement horizontal à partir de deux points sélectionnés
 ;;                     - Insertion de tous les fichiers DXF sans limitation
 ;;                     - Disposition linéaire (sur une seule ligne)
 ;; ===================================================================
@@ -160,17 +160,31 @@
     )
   )
   
-  ;; Pas entre chaque cartouche - Demander à l'utilisateur
-  (setq pasXInput (getstring "\nDistance horizontale entre les DXF [420] : "))
-  (setq pasXValue (if (= pasXInput "") 420.0 (atof pasXInput)))
+  ;; Demander le point pour le deuxième DXF pour calculer l'espacement automatiquement
+  (princ "\nSélectionnez le point pour le deuxième DXF (pour calculer l'espacement) : ")
+  (setq secondPoint (getpoint))
   
-  ;; Vérifier que la distance horizontale est positive
-  (if (<= pasXValue 0.0)
+  ;; Calculer l'espacement horizontal automatiquement ou utiliser la valeur par défaut
+  (if (null secondPoint)
     (progn
-      (alert "La distance horizontale doit être positive. Utilisation de la valeur par défaut (420).")
+      (princ "\nPoint pour le deuxième DXF non spécifié. Utilisation de l'espacement par défaut (420).")
       (setq pasX 420.0)
     )
-    (setq pasX pasXValue)
+    (progn
+      ;; Calculer la distance horizontale entre les deux points
+      (setq secondX (car secondPoint))
+      (setq secondY (cadr secondPoint))
+      (setq pasX (distance (list baseX baseY 0) (list secondX secondY 0)))
+      
+      ;; Vérifier que la distance calculée est positive et significative
+      (if (< pasX 10.0) ;; Seuil minimal pour éviter des espacements trop petits
+        (progn
+          (alert "L'espacement calculé est trop petit. Utilisation de la valeur par défaut (420).")
+          (setq pasX 420.0)
+        )
+      )
+      (princ (strcat "\nEspacement horizontal calculé : " (rtos pasX 2 2)))
+    )
   )
   
   ;; Pas de distance verticale nécessaire pour une disposition linéaire
@@ -313,7 +327,10 @@
                 (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
                 "- Facteur d'échelle : " (rtos displayScale 2 1) "\n"
                 "- Point de départ : (" (rtos baseX 2 2) "," (rtos baseY 2 2) ")\n"
-                "- Espacement horizontal : " (rtos pasX 2 0)
+                (if (null secondPoint)
+                  (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (valeur par défaut)")
+                  (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (calculé automatiquement)")
+                )
          ))
   
   (princ)
