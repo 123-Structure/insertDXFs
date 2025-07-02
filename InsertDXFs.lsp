@@ -10,7 +10,7 @@
 ;;                     - Option pour utiliser un dossier par défaut
 ;;                     - Amélioration de la robustesse avec vérifications d'erreurs
 ;;                     - Gestion des valeurs nil et des chaînes invalides
-;;                     - Ajout d'un facteur d'échelle personnalisable (20 par défaut, converti en 200)
+;;                     - Facteur d'échelle fixé à 20 (converti en 200) sans demande utilisateur
 ;;                     - Sélection interactive du point de départ pour l'insertion
 ;;                     - Calcul automatique de l'espacement horizontal à partir de deux points sélectionnés
 ;;                     - Option pour insérer tous les fichiers DXF du dossier ou faire une sélection manuelle
@@ -74,16 +74,12 @@
 )
 
 ;; Fonction principale - Insertion des DXFs
-(defun c:InsertDXFs (/ dxfFolder dxfFiles baseX baseY pasX pasY maxCartouches nbCartouches lastUsedFolder selectedDxfFiles)
+(defun c:InsertDXFs (/ dxfFolder dxfFiles pasX nbCartouches lastUsedFolder selectedDxfFiles cartoucheWidth cartoucheHeight defaultDxfFolder startPoint startX startY diagonalPoint diagonalX diagonalY centerX centerY spacingPoint spacingX spacingY displayScale scale selectionMode fullPath currentCenterX currentCenterY tempInsertPoint tempEnt dxfWidth dxfHeight ss minPoint maxPoint i ent obj minPt maxPt posX posY dxfFile scaleMultiplier)
   
   ;; ===== CONFIGURATION =====
   ;; Chargement des bibliothèques nécessaires
   (vl-load-com)
-  
-  ;; Facteur d'échelle par défaut (valeur affichée 20, valeur réelle 200)
-  (setq defaultDisplayScale 20.0)  ;; Valeur affichée à l'utilisateur
-  (setq scaleMultiplier 10.0)      ;; Multiplicateur pour convertir cm en mm
-  
+    
   ;; Récupérer le dernier dossier utilisé ou utiliser le dossier par défaut
   (setq lastUsedFolder (getLastUsedFolder))
   (setq defaultDxfFolder (if lastUsedFolder lastUsedFolder "C:/Temp/DXF/"))
@@ -218,32 +214,20 @@
     )
   )
   
-  ;; Pas de distance verticale nécessaire pour une disposition linéaire
-  (setq pasY 0.0)
+
   
-  ;; Nombre maximum de cartouches disponibles dans le gabarit - Toujours insérer tous les fichiers
-  (setq maxCartouches 99999)  ;; Valeur très élevée pour insérer tous les fichiers DXF
+  ;; Pas de limite au nombre de cartouches - Insérer tous les fichiers DXF sélectionnés
   
-  ;; Disposition toujours linéaire (sur une seule ligne)
-  (setq cartouchesParLigne 0)
-  
-  ;; ===== DEMANDE DU FACTEUR D'ÉCHELLE =====
-  ;; Demander à l'utilisateur s'il souhaite utiliser un facteur d'échelle personnalisé
-  (setq scaleInput (getstring (strcat "\nFacteur d'échelle [" (rtos defaultDisplayScale 2 1) "] : ")))
-  (setq userDisplayScale (if (= scaleInput "") defaultDisplayScale (atof scaleInput)))
-  
-  ;; Vérifier que le facteur d'échelle est valide et positif
-  (if (<= userDisplayScale 0.0)
-    (progn
-      (alert "Le facteur d'échelle doit être un nombre positif. Utilisation de la valeur par défaut.")
-      (setq displayScale defaultDisplayScale)
-    )
-    (setq displayScale userDisplayScale)
-  )
+  ;; ===== FACTEUR D'ÉCHELLE FIXE =====
+  ;; Utilisation d'un facteur d'échelle fixe de 20 (200 après conversion)
+  (setq displayScale 20.0)
+  (princ (strcat "\nFacteur d'échelle fixé à " (rtos displayScale 2 1) " (échelle 1:" (rtos displayScale 2 0) ")"))
+
   
   ;; Calculer le facteur d'échelle réel (multiplié par 10 pour conversion cm/mm)
   ;; Note: Cette conversion est nécessaire car l'utilisateur pense en échelle de dessin (1:20)
   ;; mais AutoCAD a besoin d'un facteur réel pour l'insertion (200 pour une échelle de 1:20)
+  (setq scaleMultiplier 10.0)      ;; Multiplicateur pour convertir cm en mm
   (setq scale (* displayScale scaleMultiplier))
   
   ;; ===== VÉRIFICATION DU DOSSIER =====
@@ -266,7 +250,7 @@
   (setq selectedDxfFiles nil)
   
   ;; Fonction pour récupérer tous les fichiers DXF du dossier
-  (defun getDxfFilesFromFolder (/ allFiles dxfFiles)
+  (defun getDxfFilesFromFolder (/ allFiles dxfFiles ext)
     ;; Vérifier que le dossier existe
     (if (not (and dxfFolder (is-string dxfFolder) (vl-file-directory-p dxfFolder)))
       (progn
@@ -330,7 +314,7 @@
     ;; Sinon, permettre à l'utilisateur de sélectionner les fichiers
     (progn
       ;; Fonction pour sélectionner un fichier DXF spécifique
-      (defun selectSingleFile (/ file fileName fileExt justFileName)
+      (defun selectSingleFile (/ file fileName fileExt)
         (setq file (getfiled "Sélectionner un fichier DXF" dxfFolder "dxf" 0))
         
         ;; Si l'utilisateur a annulé, retourner nil
@@ -352,6 +336,8 @@
       ;; Initialiser la liste des fichiers sélectionnés
       (setq selectedDxfFiles nil)
       (setq done nil)
+      (setq selectedFile nil)
+      (setq resp nil)
       
       ;; Boucle pour sélectionner les fichiers
       (while (not done)
@@ -400,18 +386,10 @@
   ;; ===== INSERTION DES FICHIERS DXF =====
   (setq nbCartouches 0)
   
-  ;; Remarque: La fonction getDxfDimensions n'est plus utilisée car la logique de calcul des dimensions
-  ;; est maintenant directement intégrée dans la boucle d'insertion pour chaque DXF
+
   
   ;; Boucle sur chaque fichier DXF sélectionné
   (foreach dxfFile selectedDxfFiles
-    ;; Vérification du nombre maximum de cartouches (toujours insérer tous les fichiers)
-    (if (>= nbCartouches maxCartouches)
-      (progn
-        (alert "Tous les fichiers DXF sélectionnés ont été insérés.")
-        (exit)
-      )
-    )
     
     ;; Chemin complet du fichier DXF
     (setq fullPath nil)
@@ -540,7 +518,7 @@
   ;; ===== MESSAGE DE FIN =====
   (alert (strcat "Insertion terminée ! \n\n" 
                 (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
-                "- Facteur d'échelle : " (rtos displayScale 2 1) "\n"
+                "- Facteur d'échelle : 20 (fixe - échelle 1:20)\n"
                 "- Centre du premier cartouche : (" (rtos centerX 2 2) "," (rtos centerY 2 2) ")\n"
                 "- Dimensions du cartouche : " (rtos cartoucheWidth 2 0) " x " (rtos cartoucheHeight 2 0) "\n"
                 (if (null spacingPoint)
