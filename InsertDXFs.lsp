@@ -1,6 +1,6 @@
 ;; ===================================================================
 ;; SCRIPT : InsertDXFs.lsp
-;; DESCRIPTION : Insertion automatique de fichiers DXF dans un gabarit
+;; DESCRIPTION : Insertion de fichiers DXF sélectionnés dans un gabarit
 ;; AUTEUR : Baptiste LECHAT (généré par IA)
 ;; DATE : 2023
 ;; MISE À JOUR : 2024 - Ajout de la sélection de dossier via boîte de dialogue (getfiled)
@@ -13,8 +13,10 @@
 ;;                     - Ajout d'un facteur d'échelle personnalisable (20 par défaut, converti en 200)
 ;;                     - Sélection interactive du point de départ pour l'insertion
 ;;                     - Calcul automatique de l'espacement horizontal à partir de deux points sélectionnés
-;;                     - Insertion de tous les fichiers DXF sans limitation
+;;                     - Option pour insérer tous les fichiers DXF du dossier ou faire une sélection manuelle
+;;                     - En mode sélection: choix des fichiers DXF un par un via boîte de dialogue
 ;;                     - Disposition linéaire (sur une seule ligne)
+;;                     - Possibilité d'ajouter plusieurs fichiers un par un avec confirmation
 ;; ===================================================================
 
 ;; Fonction pour vérifier si une variable est une chaîne
@@ -71,7 +73,7 @@
 )
 
 ;; Fonction principale - Insertion des DXFs
-(defun c:InsertDXFs (/ dxfFolder dxfFiles baseX baseY pasX pasY maxCartouches nbCartouches lastUsedFolder)
+(defun c:InsertDXFs (/ dxfFolder dxfFiles baseX baseY pasX pasY maxCartouches nbCartouches lastUsedFolder selectedDxfFiles)
   
   ;; ===== CONFIGURATION =====
   ;; Chargement des bibliothèques nécessaires
@@ -230,59 +232,151 @@
     )
   )
   
-  ;; ===== RÉCUPÉRATION DES FICHIERS DXF =====
-  ;; Récupère tous les fichiers du dossier
-  (setq allFiles nil)
-  (if (and dxfFolder (is-string dxfFolder) (vl-file-directory-p dxfFolder))
+  ;; ===== SÉLECTION DES FICHIERS DXF =====
+  ;; Initialiser la liste des fichiers sélectionnés
+  (setq selectedDxfFiles nil)
+  
+  ;; Fonction pour récupérer tous les fichiers DXF du dossier
+  (defun getDxfFilesFromFolder (/ allFiles dxfFiles)
+    ;; Vérifier que le dossier existe
+    (if (not (and dxfFolder (is-string dxfFolder) (vl-file-directory-p dxfFolder)))
+      (progn
+        (alert (strcat "Erreur: Le dossier " dxfFolder " n'est pas valide ou n'existe pas."))
+        (exit)
+      )
+    )
+    
+    ;; Récupérer tous les fichiers du dossier
+    (setq allFiles nil)
     (setq allFiles (vl-directory-files dxfFolder nil nil))
-    (progn
-      (alert (strcat "Erreur: Le dossier " dxfFolder " n'est pas valide ou n'existe pas."))
-      (exit)
+    
+    ;; Vérifier que la liste des fichiers n'est pas nil
+    (if (null allFiles)
+      (progn
+        (alert (strcat "Erreur lors de la lecture du dossier " dxfFolder))
+        (exit)
+      )
     )
-  )
-  
-  ;; Vérifier que la liste des fichiers n'est pas nil
-  (if (null allFiles)
-    (progn
-      (alert (strcat "Erreur lors de la lecture du dossier " dxfFolder))
-      (exit)
-    )
-  )
-  
-  ;; Filtre pour ne garder que les fichiers .dxf
-  (setq dxfFiles (vl-remove-if-not
-                   (function
-                     (lambda (x / ext)
-                        (and (is-string x) 
-                             (setq ext (vl-filename-extension x))
-                             (is-string ext)
-                             (= (strcase ext) ".DXF")
-                        )
+    
+    ;; Filtre pour ne garder que les fichiers .dxf
+    (setq dxfFiles (vl-remove-if-not
+                     (function
+                       (lambda (x / ext)
+                          (and (is-string x) 
+                               (setq ext (vl-filename-extension x))
+                               (is-string ext)
+                               (= (strcase ext) ".DXF")
+                          )
+                       )
                      )
+                     allFiles
                    )
-                   allFiles
-                 )
+    )
+    
+    ;; Vérification qu'il y a des fichiers DXF
+    (if (= (length dxfFiles) 0)
+      (progn
+        (alert "Aucun fichier DXF trouvé dans le dossier spécifié !")
+        (exit)
+      )
+    )
+    
+    dxfFiles
   )
   
-  ;; Vérification qu'il y a des fichiers DXF
-  (if (= (length dxfFiles) 0)
+  ;; Récupérer la liste des fichiers DXF disponibles
+  (setq dxfFiles (getDxfFilesFromFolder))
+  
+  ;; Demander à l'utilisateur s'il souhaite insérer tous les fichiers ou faire une sélection
+  (initget "Tous Selection T S")
+  (setq selectionMode (getkword "\nInsérer [Tous] les fichiers DXF ou faire une [Selection] ? <Tous>: "))
+  
+  ;; Si l'utilisateur a choisi d'insérer tous les fichiers ou n'a rien entré
+  (if (or (null selectionMode) (= selectionMode "Tous") (= selectionMode "T"))
+    ;; Utiliser tous les fichiers DXF
     (progn
-      (alert "Aucun fichier DXF trouvé dans le dossier spécifié !")
-      (exit)
+      (setq selectedDxfFiles dxfFiles)
+      (princ (strcat "\nTous les fichiers DXF du dossier seront insérés (" (itoa (length dxfFiles)) " fichiers)."))
+    )
+    ;; Sinon, permettre à l'utilisateur de sélectionner les fichiers
+    (progn
+      ;; Fonction pour sélectionner un fichier DXF spécifique
+      (defun selectSingleFile (/ file fileName fileExt justFileName)
+        (setq file (getfiled "Sélectionner un fichier DXF" dxfFolder "dxf" 0))
+        
+        ;; Si l'utilisateur a annulé, retourner nil
+        (if (null file)
+          nil
+          ;; Sinon, extraire le nom du fichier
+          (progn
+            (setq fileName (vl-filename-base file))
+            (setq fileExt (vl-filename-extension file))
+            (strcat fileName fileExt)
+          )
+        )
+      )
+      
+      ;; Afficher un message pour indiquer à l'utilisateur de sélectionner les fichiers
+      (alert (strcat "Vous allez maintenant sélectionner les fichiers DXF à insérer.\n\n"
+                    "Dossier: " dxfFolder))
+      
+      ;; Initialiser la liste des fichiers sélectionnés
+      (setq selectedDxfFiles nil)
+      (setq done nil)
+      
+      ;; Boucle pour sélectionner les fichiers
+      (while (not done)
+        (setq selectedFile (selectSingleFile))
+        
+        ;; Si l'utilisateur a annulé, sortir de la boucle
+        (if (null selectedFile)
+          (setq done T)
+          ;; Sinon, ajouter le fichier à la liste
+          (progn
+            ;; Vérifier si le fichier est déjà dans la liste
+            (if (member selectedFile selectedDxfFiles)
+              (princ (strcat "\nFichier déjà sélectionné: " selectedFile))
+              (progn
+                ;; Ajouter le fichier à la liste
+                (setq selectedDxfFiles (append selectedDxfFiles (list selectedFile)))
+                (princ (strcat "\nFichier ajouté: " selectedFile))
+              )
+            )
+            
+            ;; Afficher le nombre de fichiers sélectionnés
+            (princ (strcat "\nNombre de fichiers sélectionnés: " (itoa (length selectedDxfFiles))))
+            
+            ;; Demander à l'utilisateur s'il souhaite ajouter d'autres fichiers
+            (initget "Oui Non O N")
+            (setq resp (getkword "\nAjouter un autre fichier ? [Oui/Non] <Oui>: "))
+            (if (or (null resp) (= resp "Oui") (= resp "O"))
+              (setq done nil)
+              (setq done T)
+            )
+          )
+        )
+      )
     )
   )
   
-  ;; Pas de tri des fichiers - utilisation de l'ordre par défaut
+  ;; Vérifier qu'au moins un fichier a été sélectionné
+  (if (= (length selectedDxfFiles) 0)
+    (progn
+      (alert "Aucun fichier DXF sélectionné. Opération annulée.")
+      (exit)
+    )
+    (princ (strcat "\n" (itoa (length selectedDxfFiles)) " fichier(s) DXF sélectionné(s)."))
+  )
   
   ;; ===== INSERTION DES FICHIERS DXF =====
   (setq nbCartouches 0)
   
-  ;; Boucle sur chaque fichier DXF
-  (foreach dxfFile dxfFiles
+  ;; Boucle sur chaque fichier DXF sélectionné
+  (foreach dxfFile selectedDxfFiles
     ;; Vérification du nombre maximum de cartouches (toujours insérer tous les fichiers)
     (if (>= nbCartouches maxCartouches)
       (progn
-        (alert "Tous les fichiers DXF ont été insérés.")
+        (alert "Tous les fichiers DXF sélectionnés ont été insérés.")
         (exit)
       )
     )
@@ -323,7 +417,7 @@
   (saveLastUsedFolder dxfFolder)
   
   ;; ===== MESSAGE DE FIN =====
-  (alert (strcat "Insertion terminée ! \n" 
+  (alert (strcat "Insertion terminée ! \n\n" 
                 (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
                 "- Facteur d'échelle : " (rtos displayScale 2 1) "\n"
                 "- Point de départ : (" (rtos baseX 2 2) "," (rtos baseY 2 2) ")\n"
@@ -331,6 +425,9 @@
                   (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (valeur par défaut)")
                   (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (calculé automatiquement)")
                 )
+                "\n\nMode : " (if (or (null selectionMode) (= selectionMode "Tous") (= selectionMode "T"))
+                            "Tous les fichiers DXF du dossier"
+                            "Sélection manuelle des fichiers")
          ))
   
   (princ)
