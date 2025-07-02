@@ -17,6 +17,7 @@
 ;;                     - En mode sélection: choix des fichiers DXF un par un via boîte de dialogue
 ;;                     - Disposition linéaire (sur une seule ligne)
 ;;                     - Possibilité d'ajouter plusieurs fichiers un par un avec confirmation
+;;                     - Centrage des DXF dans les cartouches (point de départ, point diagonal, point d'espacement)
 ;; ===================================================================
 
 ;; Fonction pour vérifier si une variable est une chaîne
@@ -147,36 +148,64 @@
     )
   )
   
-  ;; Position de départ pour l'insertion - Demander à l'utilisateur
-  (princ "\nSélectionnez le point de départ pour l'insertion des DXF : ")
-  (setq basePoint (getpoint))
-  (if (null basePoint)
+  ;; Nouveau workflow pour centrer les DXF dans les cartouches
+  ;; 1. Point de départ du premier cartouche
+  (princ "\nSélectionnez le point de départ du premier cartouche : ")
+  (setq startPoint (getpoint))
+  (if (null startPoint)
     (progn
       (princ "\nPoint de départ non spécifié. Utilisation des coordonnées par défaut (0,0).")
-      (setq baseX 0.0)
-      (setq baseY 0.0)
+      (setq startX 0.0)
+      (setq startY 0.0)
     )
     (progn
-      (setq baseX (car basePoint))
-      (setq baseY (cadr basePoint))
+      (setq startX (car startPoint))
+      (setq startY (cadr startPoint))
     )
   )
   
-  ;; Demander le point pour le deuxième DXF pour calculer l'espacement automatiquement
-  (princ "\nSélectionnez le point pour le deuxième DXF (pour calculer l'espacement) : ")
-  (setq secondPoint (getpoint))
-  
-  ;; Calculer l'espacement horizontal automatiquement ou utiliser la valeur par défaut
-  (if (null secondPoint)
+  ;; 2. Point diagonal opposé pour calculer le centre du cartouche
+  (princ "\nSélectionnez le point diagonal opposé du premier cartouche : ")
+  (setq diagonalPoint (getpoint))
+  (if (null diagonalPoint)
     (progn
-      (princ "\nPoint pour le deuxième DXF non spécifié. Utilisation de l'espacement par défaut (420).")
+      (alert "Point diagonal opposé requis pour calculer le centre du cartouche. Opération annulée.")
+      (exit)
+    )
+    (progn
+      (setq diagonalX (car diagonalPoint))
+      (setq diagonalY (cadr diagonalPoint))
+      
+      ;; Calculer le centre du cartouche
+      (setq centerX (/ (+ startX diagonalX) 2.0))
+      (setq centerY (/ (+ startY diagonalY) 2.0))
+      (princ (strcat "\nCentre du cartouche calculé : (" (rtos centerX 2 2) "," (rtos centerY 2 2) ")"))
+    )
+  )
+  
+  ;; 3. Point pour l'espacement des cartouches
+  (princ "\nSélectionnez un point pour définir l'espacement des cartouches : ")
+  (setq spacingPoint (getpoint))
+  (if (null spacingPoint)
+    (progn
+      (princ "\nPoint d'espacement non spécifié. Utilisation de l'espacement par défaut (420).")
       (setq pasX 420.0)
     )
     (progn
-      ;; Calculer la distance horizontale entre les deux points
-      (setq secondX (car secondPoint))
-      (setq secondY (cadr secondPoint))
-      (setq pasX (distance (list baseX baseY 0) (list secondX secondY 0)))
+      ;; Calculer la distance entre le centre du premier cartouche et le point d'espacement
+      (setq spacingX (car spacingPoint))
+      (setq spacingY (cadr spacingPoint))
+      
+      ;; Calculer l'espacement horizontal (distance entre les centres des cartouches)
+      ;; spacingX est la coordonnée X du point d'espacement sélectionné par l'utilisateur
+      ;; Ce point représente où l'utilisateur souhaite placer le deuxième cartouche
+      ;; L'espacement est calculé comme la distance entre le premier point (startX) et le troisième point (spacingX)
+      (setq pasX (- spacingX startX))
+      
+      ;; Si l'espacement est négatif (point à gauche du point de départ), utiliser la valeur absolue
+      (if (< pasX 0.0)
+        (setq pasX (abs pasX))
+      )
       
       ;; Vérifier que la distance calculée est positive et significative
       (if (< pasX 10.0) ;; Seuil minimal pour éviter des espacements trop petits
@@ -371,6 +400,9 @@
   ;; ===== INSERTION DES FICHIERS DXF =====
   (setq nbCartouches 0)
   
+  ;; Remarque: La fonction getDxfDimensions n'est plus utilisée car la logique de calcul des dimensions
+  ;; est maintenant directement intégrée dans la boucle d'insertion pour chaque DXF
+  
   ;; Boucle sur chaque fichier DXF sélectionné
   (foreach dxfFile selectedDxfFiles
     ;; Vérification du nombre maximum de cartouches (toujours insérer tous les fichiers)
@@ -380,10 +412,6 @@
         (exit)
       )
     )
-    
-    ;; Calcul de la position d'insertion (disposition linéaire horizontale)
-    (setq posX (+ baseX (* pasX nbCartouches)))
-    (setq posY baseY)
     
     ;; Chemin complet du fichier DXF
     (setq fullPath nil)
@@ -395,13 +423,106 @@
     ;; Vérification que le chemin n'est pas nil
     (if fullPath
       (progn
-        ;; Insertion du DXF - Gestion des espaces dans le chemin
+        ;; Calculer le centre du cartouche actuel
+        ;; Le premier cartouche (nbCartouches = 0) est à la position centerX
+        ;; Pour les cartouches suivants, on ajoute l'espacement pasX pour chaque cartouche
+        ;; Cela garantit que l'espacement entre deux cartouches consécutifs est exactement pasX
+        (setq currentCenterX (+ centerX (* pasX nbCartouches)))
+        (setq currentCenterY centerY)
+        
+        ;; Dimensions du cartouche
+        (setq cartoucheWidth (abs (- diagonalX startX)))
+        (setq cartoucheHeight (abs (- diagonalY startY)))
+        
+        ;; Obtenir les dimensions réelles du DXF en l'insérant temporairement
+        (setq tempInsertPoint (list -10000 -10000 0)) ;; Point très éloigné pour l'insertion temporaire
+        
+        ;; Insertion temporaire du DXF pour obtenir ses dimensions
+        (if (and (is-string fullPath) (vl-string-search " " fullPath))
+          (command "_INSERT" (strcat "\"" fullPath "\"") tempInsertPoint 1 1 0)
+          (command "_INSERT" fullPath tempInsertPoint 1 1 0)
+        )
+        
+        ;; Récupérer l'entité insérée
+        (setq tempEnt (entlast))
+        
+        ;; Variables pour stocker les dimensions du DXF
+        (setq dxfWidth 0)
+        (setq dxfHeight 0)
+        
+        ;; Obtenir les dimensions du bloc
+        (if tempEnt
+          (progn
+            ;; Exploser le bloc pour obtenir ses dimensions réelles
+            (command "_EXPLODE" tempEnt)
+            (command "_SELECTALL")
+            (setq ss (ssget "_P"))
+            
+            (if ss
+              (progn
+                ;; Obtenir la boîte englobante
+                (setq minPoint (list 1e99 1e99 0))
+                (setq maxPoint (list -1e99 -1e99 0))
+                
+                (setq i 0)
+                (repeat (sslength ss)
+                  (setq ent (ssname ss i))
+                  (if (not (null ent))
+                    (progn
+                      (setq obj (vlax-ename->vla-object ent))
+                      (vla-GetBoundingBox obj 'minPt 'maxPt)
+                      (setq minPt (vlax-safearray->list minPt))
+                      (setq maxPt (vlax-safearray->list maxPt))
+                      
+                      ;; Mettre à jour les points min et max
+                      (setq minPoint (list (min (car minPoint) (car minPt)) (min (cadr minPoint) (cadr minPt)) 0))
+                      (setq maxPoint (list (max (car maxPoint) (car maxPt)) (max (cadr maxPoint) (cadr maxPt)) 0))
+                    )
+                  )
+                  (setq i (1+ i))
+                )
+                
+                ;; Calculer les dimensions réelles du DXF
+                (setq dxfWidth (* (- (car maxPoint) (car minPoint)) scale))
+                (setq dxfHeight (* (- (cadr maxPoint) (cadr minPoint)) scale))
+                
+                ;; Supprimer les entités explosées
+                (command "_ERASE" ss "")
+                
+                ;; Afficher les dimensions du DXF
+                (princ (strcat "\nDimensions du DXF " dxfFile " : " (rtos dxfWidth 2 2) " x " (rtos dxfHeight 2 2)))
+              )
+              (progn
+                ;; Si l'explosion n'a pas fonctionné, utiliser les dimensions du cartouche
+                (setq dxfWidth cartoucheWidth)
+                (setq dxfHeight cartoucheHeight)
+                (princ "\nImpossible de déterminer les dimensions du DXF, utilisation des dimensions du cartouche.")
+              )
+            )
+          )
+          (progn
+            ;; Si l'insertion temporaire a échoué, utiliser les dimensions du cartouche
+            (setq dxfWidth cartoucheWidth)
+            (setq dxfHeight cartoucheHeight)
+            (princ "\nImpossible d'insérer temporairement le DXF, utilisation des dimensions du cartouche.")
+          )
+        )
+        
+        ;; Calculer le point d'insertion pour centrer le DXF dans le cartouche
+        ;; Le point d'insertion du DXF est en bas à gauche, donc nous décalons pour centrer
+        (setq posX (- currentCenterX (/ dxfWidth 2.0)))
+        (setq posY (- currentCenterY (/ dxfHeight 2.0)))
+        
+        ;; Insertion du DXF final - Gestion des espaces dans le chemin
         (if (and (is-string fullPath) (vl-string-search " " fullPath))
           ;; Si le chemin contient des espaces, l'entourer de guillemets
-          (command "_.-INSERT" (strcat "\"" fullPath "\"") (list posX posY 0) scale scale 0)
+          (command "_INSERT" (strcat "\"" fullPath "\"") (list posX posY 0) scale scale 0)
           ;; Sinon, utiliser le chemin tel quel
-          (command "_.-INSERT" fullPath (list posX posY 0) scale scale 0)
+          (command "_INSERT" fullPath (list posX posY 0) scale scale 0)
         )
+        
+        ;; Afficher des informations sur l'insertion
+        (princ (strcat "\nInsertion de " dxfFile " au centre (" (rtos currentCenterX 2 2) "," (rtos currentCenterY 2 2) ")"))
       )
       (progn
         (alert "Erreur: Chemin de fichier invalide.")
@@ -420,14 +541,16 @@
   (alert (strcat "Insertion terminée ! \n\n" 
                 (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
                 "- Facteur d'échelle : " (rtos displayScale 2 1) "\n"
-                "- Point de départ : (" (rtos baseX 2 2) "," (rtos baseY 2 2) ")\n"
-                (if (null secondPoint)
+                "- Centre du premier cartouche : (" (rtos centerX 2 2) "," (rtos centerY 2 2) ")\n"
+                "- Dimensions du cartouche : " (rtos cartoucheWidth 2 0) " x " (rtos cartoucheHeight 2 0) "\n"
+                (if (null spacingPoint)
                   (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (valeur par défaut)")
                   (strcat "- Espacement horizontal : " (rtos pasX 2 0) " (calculé automatiquement)")
                 )
                 "\n\nMode : " (if (or (null selectionMode) (= selectionMode "Tous") (= selectionMode "T"))
                             "Tous les fichiers DXF du dossier"
                             "Sélection manuelle des fichiers")
+                "\nCentrage : DXF centrés dans les cartouches"
          ))
   
   (princ)
