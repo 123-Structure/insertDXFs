@@ -12,9 +12,9 @@
 ;;                     - Gestion des valeurs nil et des chaînes invalides
 ;;                     - Ajout d'un facteur d'échelle personnalisable (20 par défaut, converti en 200)
 ;;                     - Sélection interactive du point de départ pour l'insertion
-;;                     - Personnalisation des espacements horizontaux et verticaux entre les DXF
+;;                     - Personnalisation de l'espacement horizontal entre les DXF
 ;;                     - Insertion de tous les fichiers DXF sans limitation
-;;                     - Choix du nombre de DXF par ligne (disposition en grille ou linéaire)
+;;                     - Disposition linéaire (sur une seule ligne)
 ;; ===================================================================
 
 ;; Fonction pour vérifier si une variable est une chaîne
@@ -173,33 +173,14 @@
     (setq pasX pasXValue)
   )
   
-  (setq pasYInput (getstring "\nDistance verticale entre les DXF [297] : "))
-  (setq pasYValue (if (= pasYInput "") 297.0 (atof pasYInput)))
-  
-  ;; Vérifier que la distance verticale est positive
-  (if (<= pasYValue 0.0)
-    (progn
-      (alert "La distance verticale doit être positive. Utilisation de la valeur par défaut (297).")
-      (setq pasY 297.0)
-    )
-    (setq pasY pasYValue)
-  )
+  ;; Pas de distance verticale nécessaire pour une disposition linéaire
+  (setq pasY 0.0)
   
   ;; Nombre maximum de cartouches disponibles dans le gabarit - Toujours insérer tous les fichiers
   (setq maxCartouches 99999)  ;; Valeur très élevée pour insérer tous les fichiers DXF
   
-  ;; Nombre de cartouches par ligne (pour disposition en grille)
-  (setq cartouchesParLigneInput (getstring "\nNombre de DXF par ligne [3] (0 pour disposition linéaire) : "))
-  (setq cartouchesParLigneValue (if (= cartouchesParLigneInput "") 3 (atoi cartouchesParLigneInput)))
-  
-  ;; Pas de validation négative ici car 0 est une valeur valide (disposition linéaire)
-  (if (< cartouchesParLigneValue 0)
-    (progn
-      (alert "Le nombre de DXF par ligne ne peut pas être négatif. Utilisation de la valeur par défaut (3).")
-      (setq cartouchesParLigne 3)
-    )
-    (setq cartouchesParLigne cartouchesParLigneValue)
-  )
+  ;; Disposition toujours linéaire (sur une seule ligne)
+  (setq cartouchesParLigne 0)
   
   ;; ===== DEMANDE DU FACTEUR D'ÉCHELLE =====
   ;; Demander à l'utilisateur s'il souhaite utiliser un facteur d'échelle personnalisé
@@ -292,19 +273,9 @@
       )
     )
     
-    ;; Calcul de la position d'insertion
-    (if (> cartouchesParLigne 0)
-      ;; Disposition en grille
-      (progn
-        (setq posX (+ baseX (* pasX (rem nbCartouches cartouchesParLigne))))
-        (setq posY (+ baseY (* pasY (/ nbCartouches cartouchesParLigne))))
-      )
-      ;; Disposition linéaire horizontale
-      (progn
-        (setq posX (+ baseX (* pasX nbCartouches)))
-        (setq posY baseY)
-      )
-    )
+    ;; Calcul de la position d'insertion (disposition linéaire horizontale)
+    (setq posX (+ baseX (* pasX nbCartouches)))
+    (setq posY baseY)
     
     ;; Chemin complet du fichier DXF
     (setq fullPath nil)
@@ -342,8 +313,7 @@
                 (itoa nbCartouches) " fichier(s) DXF inséré(s) avec : \n" 
                 "- Facteur d'échelle : " (rtos displayScale 2 1) "\n"
                 "- Point de départ : (" (rtos baseX 2 2) "," (rtos baseY 2 2) ")\n"
-                "- Espacement H/V : " (rtos pasX 2 0) "/" (rtos pasY 2 0) "\n"
-                "- DXF par ligne : " (itoa cartouchesParLigne) (if (= cartouchesParLigne 0) " (linéaire)" " (grille)")
+                "- Espacement horizontal : " (rtos pasX 2 0)
          ))
   
   (princ)
